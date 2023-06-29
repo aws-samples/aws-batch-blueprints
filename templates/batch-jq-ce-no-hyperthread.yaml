@@ -88,9 +88,6 @@ Resources:
 
                 --==MYBOUNDARY==--
 
-############################
-## AWS Batch Infrastructure
-Resources:
   BatchECSCE:
     Type: AWS::Batch::ComputeEnvironment
     Properties:
