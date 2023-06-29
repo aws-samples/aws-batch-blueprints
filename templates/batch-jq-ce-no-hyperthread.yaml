@@ -48,7 +48,7 @@ Parameters:
 ############################
 ## AWS Batch Infrastructure
 Resources:
-  BatchLaunchTemplateNoHT:
+  BatchLaunchTemplate:
     Type: 'AWS::EC2::LaunchTemplate'
     Properties:
       LaunchTemplateData:
@@ -97,6 +97,9 @@ Resources:
       Type: MANAGED
       ComputeResources:
         AllocationStrategy: BEST_FIT_PROGRESSIVE
+        LaunchTemplate:
+            LaunchTemplateId: !Ref BatchLaunchTemplate
+            Version: $Latest
         MinvCpus: !Ref Minvcpus
         MaxvCpus: !Ref Maxvcpus
         SecurityGroupIds:
