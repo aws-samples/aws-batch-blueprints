@@ -1,0 +1,206 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy of this
+# software and associated documentation files (the "Software"), to deal in the Software
+# without restriction, including without limitation the rights to use, copy, modify,
+# merge, publish, distribute, sublicense, and/or sell copies of the Software, and to
+# permit persons to whom the Software is furnished to do so.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+# PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+# HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+# OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+# SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+ Setup a Job Queue and an EC2 Compute Environment on
+ AWS Batch. The CE will be based on Launch Template.
+ Author: maxhaws@
+
+Parameters:
+  InstanceType:
+    Description: EC2 instance type
+    Type: List<String>
+    Default: "c5, m5, r5"
+  Minvcpus:
+    Type: Number
+    Default: 0
+    Description: Minimum number of vCPUs per Compute Environment
+  Maxvcpus:
+    Type: Number
+    Default: 256
+    Description: Maximum number of vCPUs per Compute Environment
+  EBSBootSize:
+    Type: Number
+    Default: 30
+    Description: Size in GiB of EBS root volume
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Subnet Id
+  SecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: Security Group Id
+
+############################
+## AWS Batch Infrastructure
+Resources:
+  BatchLaunchTemplate:
+    Type: 'AWS::EC2::LaunchTemplate'
+    Properties:
+      LaunchTemplateData:
+          BlockDeviceMappings:
+          - DeviceName: '/dev/xvda'
+            Ebs:
+              DeleteOnTermination: true
+              Encrypted: false
+              Iops: 3000
+              VolumeSize: !Ref EBSBootSize
+              VolumeType: 'gp3'
+          UserData:
+            Fn::Base64: !Sub
+              - |
+                MIME-Version: 1.0
+                Content-Type: multipart/mixed; boundary="==MYBOUNDARY=="
+
+                --==MYBOUNDARY==
+                Content-Type: text/x-shellscript; charset="us-ascii"
+                #!/bin/bash
+
+                curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+                yum install -y unzip
+                unzip awscliv2.zip
+                sudo ./aws/install
+                . ~/.bash_profile
+
+                export AWS_REGION=$(curl --silent http://169.254.169.254/latest/meta-data/placement/region)
+
+                /usr/local/bin/aws configure set default.region $AWS_REGION
+                /usr/local/bin/aws configure get default.region
+
+                GB_PER_VCPUS=1
+
+                # Get Volume ID
+                VOLUME_ID=`/sbin/ebsnvme-id /dev/nvme0n1 -v | awk '{print $3}'`
+
+                # Get vCPUs
+                NB_VCPUS=`nproc`
+
+                # Compute new EBS Size
+                SIZE=$(( $NB_VCPUS * $GB_PER_VCPUS + ${BASE_EBS_SIZE} ))
+
+                # Resize the EBS volume.
+                /usr/local/bin/aws ec2 modify-volume --volume-id $VOLUME_ID --size $SIZE
+
+                # Wait for the resize to finish.
+                while [ \
+                  "$(/usr/local/bin/aws ec2 describe-volumes-modifications \
+                    --volume-id $VOLUME_ID \
+                    --filters Name=modification-state,Values="optimizing","completed" \
+                    --query "length(VolumesModifications)"\
+                    --output text)" != "1" ]; do
+                sleep 1
+                done
+
+                #Check if we're on an NVMe filesystem
+                if [[ -e "/dev/xvda" && $(readlink -f /dev/xvda) = "/dev/xvda" ]]
+                then
+                  # Rewrite the partition table so that the partition takes up all the space that it can.
+                  sudo growpart /dev/xvda 1
+
+                  # Expand the size of the file system.
+                  sudo xfs_growfs -d /
+
+                else
+                  # Rewrite the partition table so that the partition takes up all the space that it can.
+                  sudo growpart /dev/nvme0n1 1
+
+                  # Expand the size of the file system.
+                  sudo xfs_growfs -d /
+
+                fi
+
+                --==MYBOUNDARY==--
+              - {
+                  BASE_EBS_SIZE: !Ref EBSBootSize
+                }
+
+  BatchInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  BatchInstancePolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub 'BatchInstancePolicy-${AWS::StackName}'
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Action:
+              - ec2:ModifyVolume
+              - ec2:DescribeVolumesModifications
+            Resource:
+              - '*'
+      Roles:
+        - !Ref BatchInstanceRole
+
+  BatchInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref BatchInstanceRole
+
+  BatchECSCE:
+    Type: AWS::Batch::ComputeEnvironment
+    Properties:
+      Type: MANAGED
+      ComputeResources:
+        AllocationStrategy: 'BEST_FIT_PROGRESSIVE'
+        LaunchTemplate:
+            LaunchTemplateId: !Ref BatchLaunchTemplate
+            Version: !GetAtt BatchLaunchTemplate.LatestVersionNumber
+        MinvCpus: !Ref Minvcpus
+        MaxvCpus: !Ref Maxvcpus
+        SecurityGroupIds:
+          - !Ref SecurityGroupId
+        Subnets: !Ref SubnetIds
+        Type: EC2
+        InstanceRole: !Ref BatchInstanceProfile
+        InstanceTypes: !Ref InstanceType
+      ReplaceComputeEnvironment: False
+      State: ENABLED
+
+
+  BatchJobQueue:
+    Type: AWS::Batch::JobQueue
+    Properties:
+      JobQueueName: !Sub 'jq-ebs-resize-${AWS::StackName}'
+      ComputeEnvironmentOrder:
+        - ComputeEnvironment: !Ref BatchECSCE
+          Order: 1
+      Priority: 1
+      State: "ENABLED"
+
+
+#############
+## Outputs ##
+#############
+Outputs:
+  ComputeEnvironment:
+    Value: !Ref BatchECSCE
+  JobQueue:
+    Value: !Ref BatchJobQueue
