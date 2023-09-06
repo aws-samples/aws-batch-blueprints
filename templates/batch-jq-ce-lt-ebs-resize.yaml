@@ -181,7 +181,7 @@ Resources:
         Type: EC2
         InstanceRole: !Ref BatchInstanceProfile
         InstanceTypes: !Ref InstanceType
-      ReplaceComputeEnvironment: False
+      ReplaceComputeEnvironment: false
       State: ENABLED
 
 

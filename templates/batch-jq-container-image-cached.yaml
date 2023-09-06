@@ -62,14 +62,14 @@ Resources:
               VolumeSize: !Ref EBSBootSize
               VolumeType: 'gp3'
           UserData:
-            Fn::Base64: !Sub
-              - |
+            Fn::Base64:
+              !Sub |
                 MIME-Version: 1.0
                 Content-Type: multipart/mixed; boundary="==MYBOUNDARY=="
 
                 --==MYBOUNDARY==
                 Content-Type: text/x-shellscript; charset="us-ascii"
-                #!/bin/bash 
+                #!/bin/bash
                 echo ECS_IMAGE_PULL_BEHAVIOR=prefer-cached >> /etc/ecs/ecs.config
 
                 --==MYBOUNDARY==--

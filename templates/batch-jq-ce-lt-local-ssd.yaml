@@ -60,8 +60,8 @@ Resources:
               VolumeSize: !Ref EBSBootSize
               VolumeType: 'gp3'
           UserData:
-            Fn::Base64: !Sub
-              - |
+            Fn::Base64:
+              !Sub |
                 MIME-Version: 1.0
                 Content-Type: multipart/mixed; boundary="==MYBOUNDARY=="
 
