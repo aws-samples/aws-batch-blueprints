@@ -2,21 +2,20 @@
 # See https://pre-commit.com/hooks.html for more hooks
 repos:
 - repo: https://github.com/pre-commit/pre-commit-hooks
-  rev: v2.4.0
+  rev: v4.4.0
   hooks:
     - id: check-added-large-files
     - id: check-json
-    - id: check-yaml
     - id: detect-aws-credentials
     - id: end-of-file-fixer
     - id: pretty-format-json
     - id: trailing-whitespace
 -  repo: https://github.com/pre-commit/mirrors-yapf
-   rev: v0.30.0
+   rev: v0.32.0
    hooks:
    -    id: yapf
 - repo: https://github.com/executablebooks/mdformat
-  rev: 0.3.3  # Use the ref you want to point at
+  rev: 0.7.17  # Use the ref you want to point at
   hooks:
   - id: mdformat
     # optional
@@ -25,11 +24,11 @@ repos:
     - mdformat-black
     - mdformat-beautysh
 - repo: https://github.com/lovesegfault/beautysh.git
-  rev: v6.1.0
+  rev: v6.2.1
   hooks:
   - id: beautysh
 - repo: https://github.com/awslabs/cfn-python-lint
-  rev: v0.15.0 # The version of cfn-lint to use
+  rev: v0.79.9 # The version of cfn-lint to use
   hooks:
     - id: cfn-python-lint
       files: templates/.*\.(json|yml|yaml)$
