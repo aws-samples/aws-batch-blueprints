@@ -1,0 +1,33 @@
+{
+  "jobDefinitionName": "FSxLustre",
+  "type": "container",
+  "containerProperties": {
+      "image": "public.ecr.aws/amazonlinux/amazonlinux:2",
+      "command": [ "df", "-Th", "/scratch" ],
+      "mountPoints": [
+        {
+          "containerPath": "/scratch",
+          "readOnly": false,
+          "sourceVolume": "fsxforlustre"
+        }
+      ],
+      "volumes": [
+        {
+          "host": {
+             "sourcePath": "/fsxl"
+          },
+          "name": "fsxforlustre"
+        }
+      ],
+      "resourceRequirements": [
+        {
+          "type": "MEMORY",
+          "value": "500"
+        },
+        {
+          "type": "VCPU",
+          "value": "1"
+        }
+      ]
+  }
+}
