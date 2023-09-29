@@ -1,0 +1,176 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy of this
+# software and associated documentation files (the "Software"), to deal in the Software
+# without restriction, including without limitation the rights to use, copy, modify,
+# merge, publish, distribute, sublicense, and/or sell copies of the Software, and to
+# permit persons to whom the Software is furnished to do so.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+# PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+# HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+# OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+# SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+ Setup a Job Queue and an EC2 Compute Environment on
+ AWS Batch. The CE will be based on Launch Template.
+ Author: maxhaws@
+
+Parameters:
+  InstanceType:
+    Description: EC2 instance type
+    Type: List<String>
+    Default: "c5, m5, r5"
+  Minvcpus:
+    Type: Number
+    Default: 0
+    Description: Minimum number of vCPUs per Compute Environment
+  Maxvcpus:
+    Type: Number
+    Default: 256
+    Description: Maximum number of vCPUs per Compute Environment
+  EBSBootSize:
+    Type: Number
+    Default: 30
+    Description: Size in GiB of EBS root volume
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Subnet Id
+  SecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: Security Group Id
+
+############################
+## AWS Batch Infrastructure
+Resources:
+  BatchLaunchTemplate:
+    Type: 'AWS::EC2::LaunchTemplate'
+    Properties:
+      LaunchTemplateData:
+          BlockDeviceMappings:
+          - DeviceName: '/dev/xvda'
+            Ebs:
+              DeleteOnTermination: true
+              Encrypted: false
+              Iops: 3000
+              VolumeSize: !Ref EBSBootSize
+              VolumeType: 'gp3'
+          UserData:
+            Fn::Base64:
+              !Sub |
+                MIME-Version: 1.0
+                Content-Type: multipart/mixed; boundary="==MYBOUNDARY=="
+
+                --==MYBOUNDARY==
+                Content-Type: text/cloud-config; charset="us-ascii"
+                repo_update: true
+                repo_upgrade: all
+
+                packages:
+                  - jq
+                  - btrfs-progs
+                  - sed
+                  - wget
+                  - git
+                  - unzip
+                  - lvm2
+
+                runcmd:
+                  - curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "/tmp/awscliv2.zip"
+                  - unzip -q /tmp/awscliv2.zip -d /tmp && /tmp/aws/install
+                  - EBS_AUTOSCALE_VERSION=$(curl --silent "https://api.github.com/repos/awslabs/amazon-ebs-autoscale/releases/latest" | jq -r .tag_name)
+                  - cd /opt && git clone https://github.com/awslabs/amazon-ebs-autoscale.git
+                  - cd /opt/amazon-ebs-autoscale && git checkout $EBS_AUTOSCALE_VERSION
+                  - sh /opt/amazon-ebs-autoscale/install.sh 2>&1 > /var/log/ebs-autoscale-install.log
+
+                --==MYBOUNDARY==--
+
+  BatchInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  BatchInstancePolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub 'BatchInstancePolicy-${AWS::StackName}'
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - ec2:AttachVolume
+              - ec2:DescribeVolumeStatus
+              - ec2:DescribeVolumes
+              - ec2:DescribeTags
+              - ec2:ModifyInstanceAttribute
+              - ec2:DescribeVolumeAttribute
+              - ec2:CreateVolume
+              - ec2:DeleteVolume
+              - ec2:CreateTags
+            Resource:
+              - '*'
+      Roles:
+        - !Ref BatchInstanceRole
+
+  BatchInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref BatchInstanceRole
+
+  BatchECSCE:
+    Type: AWS::Batch::ComputeEnvironment
+    Properties:
+      Type: MANAGED
+      ComputeResources:
+        AllocationStrategy: 'BEST_FIT_PROGRESSIVE'
+        LaunchTemplate:
+            LaunchTemplateId: !Ref BatchLaunchTemplate
+            Version: !GetAtt BatchLaunchTemplate.LatestVersionNumber
+        MinvCpus: !Ref Minvcpus
+        MaxvCpus: !Ref Maxvcpus
+        SecurityGroupIds:
+          - !Ref SecurityGroupId
+        Subnets: !Ref SubnetIds
+        Type: EC2
+        InstanceRole: !Ref BatchInstanceProfile
+        InstanceTypes: !Ref InstanceType
+      ReplaceComputeEnvironment: false
+      State: ENABLED
+
+
+  BatchJobQueue:
+    Type: AWS::Batch::JobQueue
+    Properties:
+      JobQueueName: !Sub 'jq-ebs-autoscale-${AWS::StackName}'
+      ComputeEnvironmentOrder:
+        - ComputeEnvironment: !Ref BatchECSCE
+          Order: 1
+      Priority: 1
+      State: "ENABLED"
+
+
+#############
+## Outputs ##
+#############
+Outputs:
+  ComputeEnvironment:
+    Value: !Ref BatchECSCE
+  JobQueue:
+    Value: !Ref BatchJobQueue
