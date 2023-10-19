@@ -1,6 +1,6 @@
-# AWS Batch CloudFormation Examples.
+# AWS Batch Blueprints.
 
-Welcome to AWS Batch CloudFormation examples!
+Welcome to AWS Batch Blueprints!
 
 This project contains a collection of [AWS Batch](https://docs.aws.amazon.com/batch/latest/userguide/what-is-batch.html) patterns implemented in [AWS CloudFormation](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/Welcome.html).
 It aims to provide common AWS Batch architecture examples across vairous workloads such Genomics processing, Seismic Imaging, Machine Learning, Data Analytics and many more.
