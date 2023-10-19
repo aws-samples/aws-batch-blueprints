@@ -47,6 +47,28 @@ Parameters:
 ############################
 ## AWS Batch Infrastructure
 Resources:
+  BatchInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  BatchInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref BatchInstanceRole
+
   BatchLaunchTemplate:
     Type: 'AWS::EC2::LaunchTemplate'
     Properties:
@@ -73,7 +95,7 @@ Resources:
                 yum install -y jq
 
                 MOUNT_POINT="/scratch"
-                mkdir -p ${MOUNT_POINT}
+                mkdir -p $MOUNT_POINT
 
                 devices=`lsblk -o NAME -p -J | jq -r '.blockdevices[] | select(has("children") | not) | .name'`
                 nb_devices=`echo $devices | tr ' ' '\n' | wc -l`
@@ -81,10 +103,10 @@ Resources:
                 if [[ $nb_devices > 1 ]]; then
                   yes | mdadm --create --verbose /dev/md0 --level=0 --raid-devices=$nb_devices $devices
                   mkfs.xfs /dev/md0
-                  mount /dev/md0 ${MOUNT_POINT}
+                  mount /dev/md0 $MOUNT_POINT
                 else
                   mkfs.xfs $devices
-                  mount $devices ${MOUNT_POINT}
+                  mount $devices $MOUNT_POINT
                 fi
 
                 --==MYBOUNDARY==--
@@ -104,7 +126,7 @@ Resources:
           - !Ref SecurityGroupId
         Subnets: !Ref SubnetIds
         Type: EC2
-        InstanceRole: "ecsInstanceRole"
+        InstanceRole: !Ref BatchInstanceProfile
         InstanceTypes: !Ref InstanceType
       ReplaceComputeEnvironment: false
       State: ENABLED

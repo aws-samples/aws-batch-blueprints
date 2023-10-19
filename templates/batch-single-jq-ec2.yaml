@@ -44,6 +44,28 @@ Parameters:
 ############################
 ## AWS Batch Infrastructure
 Resources:
+  BatchInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  BatchInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref BatchInstanceRole
+
   BatchECSCE:
     Type: AWS::Batch::ComputeEnvironment
     Properties:
@@ -56,7 +78,7 @@ Resources:
           - !Ref SecurityGroupId
         Subnets: !Ref SubnetIds
         Type: EC2
-        InstanceRole: "ecsInstanceRole"
+        InstanceRole: !Ref BatchInstanceProfile
         InstanceTypes: !Ref InstanceType
       State: ENABLED
 
