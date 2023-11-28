@@ -1,0 +1,195 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy 
+# of this software and associated documentation files (the "Software"), to deal 
+# in the Software without restriction, including without limitation the rights 
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell 
+# copies of the Software, and to permit persons to whom the Software is 
+# furnished to do so.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR 
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, 
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE 
+# AUTHORS OR COPYRIGHT  HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER 
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, 
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE # SOFTWARE.
+
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Setup a AWS Batch job queue and a Fargate compute environment
+  using existing VPC subnets and security group.
+
+  NOTES: 
+    * The security group must be in the VPC you chose for subnets.
+    * If the subnets are public, you must choose AutoAssignIp == ENABLED.
+    * If the subnets are private, it must have a NAT gateway to route to ECR public endpoints to pull container images defined. 
+
+  Author: pizarroa@
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label: 
+          default: VPC details
+        Parameters:
+          - SubnetIds
+          - SecurityGroupId
+      - Label: 
+          default: AWS Batch details
+        Parameters:
+          - Maxvcpus
+          - AutoAssingIp
+
+Parameters:
+  Maxvcpus:
+    Type: Number
+    Default: 256
+    Description: Maximum number of vCPUs per Compute Environment
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Subnet Ids to launch jobs into. IF PUBLIC SUBNETS choose "ENABLED" for AutoAssignIp. 
+  SecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: Security Group Id. MUST BE IN THE SAME VPC AS THE SUBNETS.
+  AutoAssignIp:
+    Type: String
+    Default: DISABLED
+    AllowedValues:
+      - ENABLED
+      - DISABLED
+    Description: Whether to automatically assign a public IP to Fargate job definitions (usually ENABLED when deploying to public subnets).
+
+############################
+## AWS Batch Infrastructure
+Resources:
+  BatchEcsExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ecs-tasks.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  BatchEcsFargateComputeEnvironment:
+    Type: AWS::Batch::ComputeEnvironment
+    Properties:
+      Type: MANAGED
+      ComputeEnvironmentName: !Sub "ce-${AWS::StackName}"
+      ComputeResources:
+        Type: FARGATE
+        MaxvCpus: !Ref Maxvcpus
+        SecurityGroupIds:
+          - !Ref SecurityGroupId
+        Subnets: !Ref SubnetIds
+      State: ENABLED
+
+  BatchEcsFargateJobQueue:
+    Type: AWS::Batch::JobQueue
+    Properties:
+      JobQueueName: !Sub "jq-${AWS::StackName}"
+      ComputeEnvironmentOrder:
+        - ComputeEnvironment: !Ref BatchEcsFargateComputeEnvironment
+          Order: 1
+      Priority: 1
+      State: "ENABLED"
+
+  # AWS Batch job definition for Linux containers on X86_64 architectures
+  BatchJobDefLinux:
+    Type: AWS::Batch::JobDefinition
+    Properties:
+      Type: container
+      JobDefinitionName: !Sub "jd-${AWS::StackName}-hello-linux"
+      ContainerProperties:
+        Image: public.ecr.aws/docker/library/hello-world:linux
+        ResourceRequirements:
+          - Type: VCPU
+            Value: "0.5"
+          - Type: MEMORY
+            Value: "1024"
+        ExecutionRoleArn: !GetAtt BatchEcsExecutionRole.Arn
+        JobRoleArn: !GetAtt BatchEcsExecutionRole.Arn
+        FargatePlatformConfiguration:
+          PlatformVersion: LATEST
+        RuntimePlatform:
+          CpuArchitecture: X86_64
+          OperatingSystemFamily: LINUX
+        NetworkConfiguration:
+          AssignPublicIp: !Ref AutoAssignIp
+      PlatformCapabilities:
+        - FARGATE
+
+  
+  # AWS Batch job definition for Windows on X86_64 architectures
+  BatchJobDefWindows:
+    Type: AWS::Batch::JobDefinition
+    Properties:
+      Type: container
+      JobDefinitionName: !Sub "jd-${AWS::StackName}-hello-windows"
+      ContainerProperties:
+        Image: public.ecr.aws/docker/library/hello-world:nanoserver-ltsc2022
+        ResourceRequirements:
+          - Type: VCPU
+            Value: "1"
+          - Type: MEMORY
+            Value: "2048"
+        ExecutionRoleArn: !GetAtt BatchEcsExecutionRole.Arn
+        JobRoleArn: !GetAtt BatchEcsExecutionRole.Arn
+        FargatePlatformConfiguration:
+          PlatformVersion: LATEST
+        RuntimePlatform:
+          CpuArchitecture: X86_64
+          OperatingSystemFamily: WINDOWS_SERVER_2022_CORE
+        NetworkConfiguration:
+          AssignPublicIp: !Ref AutoAssignIp
+      PlatformCapabilities:
+        - FARGATE
+
+  # AWS Batch job definition for Linux containers on AMD64 architectures (Graviton)
+  BatchJobDefGraviton:
+    Type: AWS::Batch::JobDefinition
+    Properties:
+      Type: container
+      JobDefinitionName: !Sub "jd-${AWS::StackName}-hello-graviton"
+      ContainerProperties:
+        Image: public.ecr.aws/docker/library/hello-world:linux
+        ResourceRequirements:
+          - Type: VCPU
+            Value: "0.5"
+          - Type: MEMORY
+            Value: "1024"
+        ExecutionRoleArn: !GetAtt BatchEcsExecutionRole.Arn
+        JobRoleArn: !GetAtt BatchEcsExecutionRole.Arn
+        FargatePlatformConfiguration:
+          PlatformVersion: LATEST
+        RuntimePlatform:
+          CpuArchitecture: ARM64
+          OperatingSystemFamily: LINUX
+        NetworkConfiguration:
+          AssignPublicIp: !Ref AutoAssignIp
+      PlatformCapabilities:
+        - FARGATE
+
+############
+## Outputs
+Outputs:
+  # Batch Fargate Compute Environment
+  ComputeEnvironment:
+    Value: !Ref BatchEcsFargateComputeEnvironment
+  # Batch Fargate Job Queue
+  JobQueue:
+    Value: !Ref BatchEcsFargateJobQueue
+  # Hello World job definitions
+  JobDefintionLinux:
+    Value: !Ref BatchJobDefLinux
+  JobDefintionWindows:
+    Value: !Ref BatchJobDefWindows
+  JobDefintionGraviton:
+    Value: !Ref BatchJobDefGraviton

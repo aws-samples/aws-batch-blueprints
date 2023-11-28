@@ -1,0 +1,357 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy 
+# of this software and associated documentation files (the "Software"), to deal 
+# in the Software without restriction, including without limitation the rights 
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell 
+# copies of the Software, and to permit persons to whom the Software is 
+# furnished to do so.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR 
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, 
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE 
+# AUTHORS OR COPYRIGHT  HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER 
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, 
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE # SOFTWARE.
+
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Setup a new VPC with private and public subnets, NAT and Internet Gateways, and a Security Group within a single Availability Zone. Sets up AWS Batch Fargate resources including IAM execution role, EC2 security  group, and Batch job queue, Fargate compute environment, and job definitions for Linux (X86_64 adn ARM64) and Windows (X86_64).
+
+  Author: pizarroa@
+### Stack metadata
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: VPC parameters
+        Parameters:
+          - VpcCIDR
+          - PublicCIDR
+          - PrivateCIDR
+      - Label: 
+          default: AWS Batch parameters
+        Parameters:
+          - Maxvcpus
+
+Parameters:
+  PrivateCIDR:
+    AllowedPattern: "\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}/(1[6-9]|2[0-9]|3[0-2])$"
+    Description: CIDR block for the private subnet
+    Default: 10.0.16.0/20
+    Type: String
+  PublicCIDR:
+    AllowedPattern: "\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}/(1[6-9]|2[0-9]|3[0-2])$"
+    Description: CIDR block for the public subnet
+    Default: 10.0.0.0/24
+    Type: String
+  VpcCIDR:
+    Description: "CIDR block for the VPC if it will be created. Required if you opt to create a VPC."
+    Default: 10.0.0.0/16
+    Type: String
+  Maxvcpus:
+    Type: Number
+    Default: 256
+    Description: Maximum number of vCPUs per Compute Environment
+
+
+Resources:
+  ###############################################
+  ## VPC resources                             ##
+  ###############################################
+
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCIDR
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: "Name"
+          Value: !Sub '${AWS::StackName}:Basic-Batch-Fargate'
+
+  DefaultRouteDependsOnPublic:
+    Type: AWS::EC2::Route
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+      RouteTableId: !Ref RouteTablePublic
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+      - Key: Name
+        Value: !Sub '${AWS::StackName}:InternetGateway'
+      - Key: Stack
+        Value: !Ref AWS::StackId
+
+  NatEIPPublic:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  NatGatewayPublic:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt  NatEIPPublic.AllocationId
+      SubnetId:
+        !Ref Public
+
+  NatRoutePrivate:
+    Type: AWS::EC2::Route
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId:
+        !Ref NatGatewayPublic
+      RouteTableId:
+        !Ref RouteTablePrivate
+
+  Private:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock:
+        !Ref PrivateCIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+      - Key: Name
+        Value: !Sub '${AWS::StackName}:PrivateSubnetA'
+      - Key: Stack
+        Value:
+          !Ref AWS::StackId
+      VpcId:
+        !Ref Vpc
+
+  Public:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock:
+        !Ref PublicCIDR
+      MapPublicIpOnLaunch: true
+      Tags:
+      - Key: Name
+        Value: !Sub '${AWS::StackName}:PublicSubnetA'
+      - Key: Stack
+        Value:
+          !Ref AWS::StackId
+      VpcId:
+        !Ref Vpc
+
+  RouteAssociationPrivate:
+    Properties:
+      RouteTableId:
+        !Ref RouteTablePrivate
+      SubnetId:
+        !Ref Private
+    Type: AWS::EC2::SubnetRouteTableAssociation
+
+  RouteAssociationPublic:
+    Properties:
+      RouteTableId:
+        !Ref RouteTablePublic
+      SubnetId:
+        !Ref Public
+    Type: AWS::EC2::SubnetRouteTableAssociation
+
+  RouteTablePrivate:
+    Properties:
+      Tags:
+      - Key: Name
+        Value: !Sub '${AWS::StackName}:PrivateRoute'
+      - Key: Stack
+        Value:
+          !Ref AWS::StackId
+      VpcId:
+        !Ref Vpc
+    Type: AWS::EC2::RouteTable
+
+  RouteTablePublic:
+    Properties:
+      Tags:
+      - Key: Name
+        Value: !Sub '${AWS::StackName}:PublicRoute'
+      - Key: Stack
+        Value:
+          !Ref AWS::StackId
+      VpcId:
+        !Ref Vpc
+    Type: AWS::EC2::RouteTable
+
+  VPCGatewayAttachment:
+    Properties:
+      InternetGatewayId:
+        !Ref InternetGateway
+      VpcId:
+        !Ref Vpc
+    Type: AWS::EC2::VPCGatewayAttachment
+
+  ###############################################
+  ## AWS Batch Fargate environment resources   ##
+  ###############################################
+  BatchSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: SG for Batch resources to be able to egress all TCP and ingress from the same SG
+      GroupName: batch-fargate-sg
+      VpcId: !Ref Vpc
+
+  BatchSGIngressRule: 
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      IpProtocol: tcp
+      FromPort: 0
+      ToPort: 65535
+      SourceSecurityGroupId: !Ref BatchSecurityGroup
+      GroupId: !Ref BatchSecurityGroup
+
+  BatchEcsExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ecs-tasks.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  BatchEcsFargateComputeEnvironment:
+    Type: AWS::Batch::ComputeEnvironment
+    Properties:
+      Type: MANAGED
+      ComputeEnvironmentName: !Sub "ce-${AWS::StackName}"
+      ComputeResources:
+        Type: FARGATE
+        MaxvCpus: !Ref Maxvcpus
+        SecurityGroupIds:
+          - !Ref BatchSecurityGroup
+        Subnets: 
+          - !Ref Private
+      State: ENABLED
+
+  BatchEcsFargateJobQueue:
+    Type: AWS::Batch::JobQueue
+    Properties:
+      JobQueueName: !Sub "jq-${AWS::StackName}"
+      ComputeEnvironmentOrder:
+        - ComputeEnvironment: !Ref BatchEcsFargateComputeEnvironment
+          Order: 1
+      Priority: 1
+      State: ENABLED
+
+  # AWS Batch job definition for Linux containers on X86_64 architectures
+  BatchJobDefLinux:
+    Type: AWS::Batch::JobDefinition
+    Properties:
+      Type: container
+      JobDefinitionName: !Sub "jd-${AWS::StackName}-hello-linux"
+      ContainerProperties:
+        Image: public.ecr.aws/docker/library/hello-world:linux
+        ResourceRequirements:
+          - Type: VCPU
+            Value: "0.5"
+          - Type: MEMORY
+            Value: "1024"
+        ExecutionRoleArn: !GetAtt BatchEcsExecutionRole.Arn
+        JobRoleArn: !GetAtt BatchEcsExecutionRole.Arn
+        FargatePlatformConfiguration:
+          PlatformVersion: LATEST
+        RuntimePlatform:
+          CpuArchitecture: X86_64
+          OperatingSystemFamily: LINUX
+      PlatformCapabilities:
+        - FARGATE
+
+  
+  # AWS Batch job definition for Windows on X86_64 architectures
+  BatchJobDefWindows:
+    Type: AWS::Batch::JobDefinition
+    Properties:
+      Type: container
+      JobDefinitionName: !Sub "jd-${AWS::StackName}-hello-windows"
+      ContainerProperties:
+        Image: public.ecr.aws/docker/library/hello-world:nanoserver-ltsc2022
+        ResourceRequirements:
+          - Type: VCPU
+            Value: "1"
+          - Type: MEMORY
+            Value: "2048"
+        ExecutionRoleArn: !GetAtt BatchEcsExecutionRole.Arn
+        JobRoleArn: !GetAtt BatchEcsExecutionRole.Arn
+        FargatePlatformConfiguration:
+          PlatformVersion: LATEST
+        RuntimePlatform:
+          CpuArchitecture: X86_64
+          OperatingSystemFamily: WINDOWS_SERVER_2022_CORE
+      PlatformCapabilities:
+        - FARGATE
+
+  # AWS Batch job definition for Linux containers on AMD64 architectures (Graviton)
+  BatchJobDefGraviton:
+    Type: AWS::Batch::JobDefinition
+    Properties:
+      Type: container
+      JobDefinitionName: !Sub "jd-${AWS::StackName}-hello-graviton"
+      ContainerProperties:
+        Image: public.ecr.aws/docker/library/hello-world:linux
+        ResourceRequirements:
+          - Type: VCPU
+            Value: "0.5"
+          - Type: MEMORY
+            Value: "1024"
+        ExecutionRoleArn: !GetAtt BatchEcsExecutionRole.Arn
+        JobRoleArn: !GetAtt BatchEcsExecutionRole.Arn
+        FargatePlatformConfiguration:
+          PlatformVersion: LATEST
+        RuntimePlatform:
+          CpuArchitecture: ARM64
+          OperatingSystemFamily: LINUX
+      PlatformCapabilities:
+        - FARGATE
+
+
+Outputs:
+  VPC:
+    Value: !Ref Vpc
+    Description: ID of the VPC
+    Export:
+      Name: !Sub ${AWS::StackName}-VPC
+  DefaultPrivateSubnet:
+    Description: The ID of a default private subnet
+    Value: !Ref Private
+    Export:
+      Name: !Sub "${AWS::StackName}-DefaultPrivateSubnet"
+  DefaultPublicSubnet:
+    Description: The ID of a default public subnet
+    Value: !Ref Public
+    Export:
+      Name: !Sub "${AWS::StackName}-DefaultPublicSubnet"
+  InternetGatewayId:
+    Description: The ID of the Internet Gateway
+    Value: !Ref InternetGateway
+    Export:
+      Name: !Sub "${AWS::StackName}-InternetGateway"
+  # AWS Batch resources 
+  BatchComputeEnvironment:
+    Description: The AWS Batch with Fargate compute environment created
+    Value: !Ref BatchEcsFargateComputeEnvironment
+  BatchJobQueue:
+    Description: The AWS Batch with Fargate job queue
+    Value: !Ref BatchEcsFargateJobQueue
+  BatchJobDefinitionLinux:
+    Description: An AWS Batch job definition for Hello World on Linux on x86_64 architecture 
+    Value: !Ref BatchJobDefLinux
+  BatchJobDefinitionWindows:
+    Description: An AWS Batch job definition for Hello World on Windows on x86_64 architecture 
+    Value: !Ref BatchJobDefWindows
+  BatchJobDefinitionGraviton:
+    Description: An AWS Batch job definition for Hello World on Linux on ARM64 architecture 
+    Value: !Ref BatchJobDefGraviton
+    
+    
