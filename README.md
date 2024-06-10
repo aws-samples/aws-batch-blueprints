@@ -5,7 +5,11 @@ Welcome to AWS Batch Blueprints!
 This project contains a collection of [AWS Batch](https://docs.aws.amazon.com/batch/latest/userguide/what-is-batch.html) patterns implemented in [AWS CloudFormation](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/Welcome.html).
 It aims to provide common AWS Batch architecture examples across vairous workloads such Genomics processing, Seismic Imaging, Machine Learning, Data Analytics and many more.
 
-## Examples list
+## Examples
+
+The following tables describe the CloudFormation examples, separated by the underlying compute resource utilized in the AWS Batch compute environment &mdash; Amazon EC2 and AWS Fargate
+
+### Amazon EC2 for compute environment resources
 
 | **Name**                                        | **Description**                                                                                                                                                                                                                                                                                                     | **Template**                                                                                 |
 | ----------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
@@ -18,6 +22,24 @@ It aims to provide common AWS Batch architecture examples across vairous workloa
 | Detailed Monitoring of EC2 Compute environments | Configure Amazon CloudWatch Agent to collect Amazon EC2 memory and disk utilization                                                                                                                                                                                                                                 | [batch-jq-ce-lt-detailed-monitoring.yaml](templates/batch-jq-ce-lt-detailed-monitoring.yaml) |
 | Amazon FSx for Lustre on Compute Environment    | Mount Amazon FSx for Lustre on a compute environment of AWS Batch                                                                                                                                                                                                                                                   | [batch-jq-ce-lt-fsx-for-lustre.yaml](templates/batch-jq-ce-lt-fsx-for-lustre.yaml)           |
 | NVIDIA GPU Metrics                              | Collect NVIDIA GPU metrics for jobs running with AWS Batch                                                                                                                                                                                                                                                          | [README](ec2/gpu-monitoring-metrics/README.md)                                               |
+
+### AWS Fargate for compute environment resources
+
+With AWS Batch with ECS Fargate resource, you are able to leverage x86_64 and ARM64 architectures for Linux containers, and x86_64 Windows containers, all within the same AWS Batch compute environment.  
+
+This is done by virtue of setting the [`containerProperties.fargatePlatformConfiguration``]() and [`containerProperties.runtimePlatform` ]() parameters in a Batch job definition that is submitted to a job queue / compute environment that utilizes Fargate resources for compute. 
+
+We provided an example AWS Batch environment that leverages Fargate resources within private subnets. You can leverage an existing VPC or create a new single-Availability Zone VPC using the templates provided. 
+
+We provide two templates: 
+
+| Name | Description | Location | 
+| ---- | ----------- | -------- | 
+| Fargate with existing VPC | A template that leverages an existing VPC subnet and security group. | [fargate/cloudformation/batch-fargate-existing-vpc.yaml](fargate/cloudformation/batch-fargate-existing-vpc.yaml)
+| Fargate with new VPC | A template that creates a new VPC and other resources needed for running jobs.  | [fargate/cloudformation/batch-fargate-new-vpc.yaml](fargate/cloudformation/batch-fargate-new-vpc.yaml)
+
+Detailed instructions on how to leverage these examples are in [How to use AWS Fargate with AWS Batch](examples/fargate/README.md).
+
 
 ## Security
 
