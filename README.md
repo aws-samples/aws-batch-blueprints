@@ -35,10 +35,10 @@ We provide two templates:
 
 | Name | Description | Location | 
 | ---- | ----------- | -------- | 
-| Fargate with existing VPC | A template that leverages an existing VPC subnet and security group. | [cloudformation/batch-fargate-existing-vpc.yaml](cloudformation/batch-fargate-existing-vpc.yaml)
-| Fargate with new VPC | A template that creates a new VPC and other resources needed for running jobs.  | [cloudformation/batch-fargate-new-vpc.yaml](cloudformation/batch-fargate-new-vpc.yaml)
+| Fargate with existing VPC | A template that leverages an existing VPC subnet and security group. | [fargate/cloudformation/batch-fargate-existing-vpc.yaml](fargate/cloudformation/batch-fargate-existing-vpc.yaml)
+| Fargate with new VPC | A template that creates a new VPC and other resources needed for running jobs.  | [fargate/cloudformation/batch-fargate-new-vpc.yaml](fargate/cloudformation/batch-fargate-new-vpc.yaml)
 
-Detailed instructions on how to leverage these examples are in [the examples directory for Fargate](examples/fargate/README.md).
+Detailed instructions on how to leverage these examples are in [How to use AWS Fargate with AWS Batch](examples/fargate/README.md).
 
 
 ## Security
