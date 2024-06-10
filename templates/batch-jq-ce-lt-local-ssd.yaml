@@ -92,7 +92,7 @@ Resources:
 
                 #!/bin/bash
 
-                yum install -y jq
+                yum install -y jq mdadm
 
                 MOUNT_POINT="/scratch"
                 mkdir -p $MOUNT_POINT
