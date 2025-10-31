@@ -24,7 +24,7 @@ Parameters:
   InstanceType:
     Description: EC2 instance type
     Type: List<String>
-    Default: "c5, m5, r5"
+    Default: "default_x86_64"
     ConstraintDescription: must be a valid EC2 instance type.
   Minvcpus:
     Type: Number
