@@ -1,0 +1,133 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy of this
+# software and associated documentation files (the "Software"), to deal in the Software
+# without restriction, including without limitation the rights to use, copy, modify,
+# merge, publish, distribute, sublicense, and/or sell copies of the Software, and to
+# permit persons to whom the Software is furnished to do so.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+# PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+# HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+# OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+# SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+ Setup a Job Queue and an EC2 Compute Environment on
+ AWS Batch. The CE will be based on Launch Template.
+ Author: maxhaws@
+
+Parameters:
+  InstanceType:
+    Description: EC2 instance type
+    Type: List<String>
+    Default: "p5en.48xlarge"
+  Minvcpus:
+    Type: Number
+    Default: 0
+    Description: Minimum number of vCPUs per Compute Environment
+  Maxvcpus:
+    Type: Number
+    Default: 192
+    Description: Maximum number of vCPUs per Compute Environment
+  EBSBootSize:
+    Type: Number
+    Default: 30
+    Description: Size in GiB of EBS root volume
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Subnet Id
+  SecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: Security Group Id
+  CapacityReservationId:
+    Type: String
+    Description: Capacity Reservation Id
+
+############################
+## AWS Batch Infrastructure
+Resources:
+  BatchInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  BatchInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref BatchInstanceRole
+
+  BatchLaunchTemplate:
+    Type: 'AWS::EC2::LaunchTemplate'
+    Properties:
+      LaunchTemplateData:
+          BlockDeviceMappings:
+            - DeviceName: '/dev/xvda'
+              Ebs:
+                DeleteOnTermination: true
+                Encrypted: false
+                Iops: 3000
+                VolumeSize: !Ref EBSBootSize
+                VolumeType: 'gp3'
+          CapacityReservationSpecification:
+            CapacityReservationTarget:
+              CapacityReservationId: !Ref CapacityReservationId
+          InstanceMarketOptions:
+            MarketType: 'capacity-block'
+
+
+  BatchECSCE:
+    Type: AWS::Batch::ComputeEnvironment
+    Properties:
+      Type: MANAGED
+      ComputeResources:
+        AllocationStrategy: BEST_FIT
+        LaunchTemplate:
+            LaunchTemplateId: !Ref BatchLaunchTemplate
+            Version: !GetAtt BatchLaunchTemplate.LatestVersionNumber
+        MinvCpus: !Ref Minvcpus
+        MaxvCpus: !Ref Maxvcpus
+        SecurityGroupIds:
+          - !Ref SecurityGroupId
+        Subnets: !Ref SubnetIds
+        Type: EC2
+        InstanceRole: !Ref BatchInstanceProfile
+        InstanceTypes: !Ref InstanceType
+      ReplaceComputeEnvironment: false
+      State: ENABLED
+
+
+  BatchJobQueue:
+    Type: AWS::Batch::JobQueue
+    Properties:
+      JobQueueName: !Sub 'jq-lt-${AWS::StackName}'
+      ComputeEnvironmentOrder:
+        - ComputeEnvironment: !Ref BatchECSCE
+          Order: 1
+      Priority: 1
+      State: "ENABLED"
+
+
+#############
+## Outputs ##
+#############
+Outputs:
+  ComputeEnvironment:
+    Value: !Ref BatchECSCE
+  JobQueue:
+    Value: !Ref BatchJobQueue
