@@ -16,16 +16,16 @@
 
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
- Setup a AWS Batch Compute environment and Job Queue
- with ecs containers not running on HT.
- Author: maxhaws@
+ Setup an AWS Batch Compute Environment and Job Queue
+ with ECS containers not running on HT (SMT disabled at boot, any instance size).
+ Experimental: disabling HT is not officially supported by AWS Batch.
+ Author: yusongw@
 
 Parameters:
-  InstanceType:
-    Description: EC2 instance type
-    Type: List<String>
-    Default: "c5, m5, r5"
-    ConstraintDescription: must be a valid EC2 instance type.
+  InstanceTypes:
+    Description: EC2 instance types or families
+    Type: CommaDelimitedList
+    Default: "default_x86_64"
   Minvcpus:
     Type: Number
     Default: 0
@@ -33,7 +33,7 @@ Parameters:
   Maxvcpus:
     Type: Number
     Default: 256
-    Description: Maximum number of vCPUs per Compute Environment
+    Description: Max EC2 vCPUs per CE, counted with HT. On SMT types set 2x the cores you need (256 = 128 cores)
   EBSBootSize:
     Type: Number
     Default: 30
@@ -75,40 +75,45 @@ Resources:
     Properties:
       LaunchTemplateData:
           BlockDeviceMappings:
-          - DeviceName: '/dev/xvda'
+          - DeviceName: '/dev/xvda'          # custom AMI: must match its root device
             Ebs:
               DeleteOnTermination: true
               Encrypted: false
               Iops: 3000
               VolumeSize: !Ref EBSBootSize
               VolumeType: 'gp3'
+          # Boothook runs on every boot inside cloud-init.service; ecs.service has
+          # After=cloud-final.service, so ECS registers CPUs only after SMT is off.
+          # Batch then learns the registered CPU count from ECS for scaling.
+          # Custom AMI needs: cloud-init, that ecs.service ordering, kernel smt/control.
+          # Check result: journalctl -b -t batch-smt-off
           UserData:
-            Fn::Base64:
-              !Sub |
-                MIME-Version: 1.0
-                Content-Type: multipart/mixed; boundary="==MYBOUNDARY=="
+            Fn::Base64: |
+              MIME-Version: 1.0
+              Content-Type: multipart/mixed; boundary="==MYBOUNDARY=="
 
-                --==MYBOUNDARY==
-                Content-Type: text/x-shellscript; charset="us-ascii"
+              --==MYBOUNDARY==
+              Content-Type: text/cloud-boothook; charset="us-ascii"
 
-                #!/bin/bash
+              #cloud-boothook
+              #!/bin/bash
+              CTL=/sys/devices/system/cpu/smt/control
+              log() { logger -s -t batch-smt-off "$*"; }   # journal + cloud-init-output.log
 
-                PHYS_CORES=$(( `nproc`/2 -1 ))
-                # Alternative to get real physical core id
-                # PHYS_CORES=`lscpu --all --parse=CORE | sort -u -g | tail -n+2 | paste -s -d ','`
+              state=$(cat $CTL 2>/dev/null || echo missing)
+              case "$state" in
+                on)
+                  echo off > $CTL
+                  [ "$(cat /sys/devices/system/cpu/smt/active)" = "0" ] \
+                    && log "OK: SMT disabled, nproc=$(nproc)" \
+                    || log "ERROR: SMT still on, ECS will register all vCPUs" ;;
+                off|forceoff|notsupported)
+                  log "OK: no SMT to disable (state=$state), nproc=$(nproc)" ;;   # e.g. c7a, c8a
+                *)
+                  log "ERROR: cannot control SMT (state=$state), ECS will register all vCPUs" ;;
+              esac
 
-                if [ $PHYS_CORES -le 0 ]; then
-                  ALLOWED_CORES=0
-                else
-                  ALLOWED_CORES=0-$PHYS_CORES
-                fi
-
-                mkdir -p /sys/fs/cgroup/cpuset/ecs/cpuset.cpus
-                echo $ALLOWED_CORES > /sys/fs/cgroup/cpuset/ecs/cpuset.cpus
-
-                systemctl restart docker.service
-
-                --==MYBOUNDARY==--
+              --==MYBOUNDARY==--
 
   BatchECSCE:
     Type: AWS::Batch::ComputeEnvironment
@@ -120,13 +125,13 @@ Resources:
             LaunchTemplateId: !Ref BatchLaunchTemplate
             Version: $Latest
         MinvCpus: !Ref Minvcpus
-        MaxvCpus: !Ref Maxvcpus
+        MaxvCpus: !Ref Maxvcpus            # EC2 vCPUs: half are usable when HT is off
         SecurityGroupIds:
           - !Ref SecurityGroupId
         Subnets: !Ref SubnetIds
         Type: EC2
         InstanceRole: !Ref BatchInstanceProfile
-        InstanceTypes: !Ref InstanceType
+        InstanceTypes: !Ref InstanceTypes
       State: ENABLED
 
   BatchJobQueue:
